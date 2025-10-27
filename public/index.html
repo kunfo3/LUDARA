@@ -1,1 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Poker • Lobby & Table</title>
+  <link rel="stylesheet" href="/game.css" />
+  <style>
+    /* Minimal helpers – main look lives in /game.css */
+    .hidden{display:none!important}
+    .disabled{opacity:.5;pointer-events:none}
+    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:300}
+    .modal{background:#0f1624;border:1px solid #233047;border-radius:14px;padding:16px;min-width:320px;max-width:420px;box-shadow:0 20px 50px rgba(0,0,0,.55)}
+    .row{display:flex;gap:10px;align-items:center}
+    .col{display:flex;flex-direction:column;gap:8px}
+    input[type="text"],input[type="email"],input[type="password"],input[type="number"]{background:#0b1220;border:1px solid #233047;border-radius:10px;padding:10px 12px;color:#e5e7eb}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #233047;background:#162131;color:#e5e7eb;font-weight:800;cursor:pointer}
+    .btn.primary{background:linear-gradient(#23d3ee,#16b8d6);color:#001015;border:0}
+    .toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#0f1624;border:1px solid #233047;border-radius:999px;padding:10px 16px;font-weight:800;z-index:400}
+    .tabbtn.active{filter:brightness(1.12)}
+    /* Inline buy-in bubble above free seat */
+    .buyin-pop{position:absolute;left:50%;top:-8px;transform:translate(-50%,-100%);background:#0f1624;border:1px solid #233047;border-radius:12px;padding:10px;display:flex;gap:8px;align-items:center;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+    /* Player (seat 8) enhancements */
+    .seat.me .controls{position:absolute;left:calc(var(--avatar) + 110px);top:50%;transform:translateY(-50%);display:flex;gap:8px;align-items:center}
+    .seat.me .cards{position:absolute;left:56px;top:50%;transform:translateY(-50%);display:flex;gap:8px}
+  </style>
+</head>
+<body>
 
+<!-- ================= TOPBAR ================= -->
+<div id="topbar">
+  <!-- Left: avatar + nick + balance (only when logged) -->
+  <div class="top-left hidden" id="top-left">
+    <img class="avatar" id="avatar" src="/avatar_1.png" alt="avatar" />
+    <div class="nick" id="nick">Player</div>
+    <div class="balance" id="balance" title="Chips (KM)">0</div>
+  </div>
+
+  <!-- Center: Small / Big table (only when logged) -->
+  <div class="top-center hidden" id="top-center">
+    <button class="tabbtn" id="btn-small" aria-pressed="true">Small Table</button>
+    <button class="tabbtn secondary" id="btn-big" aria-pressed="false">Big Table</button>
+  </div>
+
+  <!-- Right: guest = Login/Register, logged = Logout -->
+  <div class="top-right" id="top-right">
+    <button class="btn-ghost" id="btn-login">Login</button>
+    <button class="btn-ghost" id="btn-register">Register</button>
+    <button class="btn-ghost hidden" id="btn-logout">Logout</button>
+  </div>
+</div>
+
+<!-- =============== STAGE / TABLE =============== -->
+<div class="wrap" id="wrap">
+  <div id="stage">
+    <div id="table" role="img" aria-label="Poker table background"></div>
+
+    <!-- POT & STATUS -->
+    <div id="pot" aria-live="polite">POT: 0</div>
+    <div id="status" aria-live="polite">Waiting for players…</div>
+
+    <!-- BOARD cards -->
+    <div id="board" aria-label="Community cards">
+      <div class="card back"></div>
+      <div class="card back"></div>
+      <div class="card back"></div>
+      <div class="card back"></div>
+      <div class="card back"></div>
+    </div>
+
+    <!-- SEATS (0..8) – CSS positions them on ellipse; you are 8 (bottom) -->
+    <div id="seats"></div>
+  </div>
+</div>
+
+<!-- ================== LOGIN MODAL ================== -->
+<div class="modal-backdrop hidden" id="login-modal">
+  <div class="modal">
+    <h3 style="margin:0 0 10px 0">Login</h3>
+    <div class="col">
+      <label>Nickname</label>
+      <input id="login-nick" type="text" placeholder="your_nick" />
+      <label>Password</label>
+      <input id="login-pass" type="password" placeholder="••••••" />
+      <button class="btn primary" id="do-login">Login</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================ REGISTER MODAL ================ -->
+<div class="modal-backdrop hidden" id="register-modal">
+  <div class="modal">
+    <h3 style="margin:0 0 10px 0">Register</h3>
+    <div class="col">
+      <label>Email</label>
+      <input id="reg-email" type="email" placeholder="you@mail.com" />
+      <label>Nickname</label>
+      <input id="reg-nick" type="text" placeholder="your_nick" />
+      <label>Password</label>
+      <input id="reg-pass" type="password" placeholder="••••••" />
+      <button class="btn primary" id="do-register">Create Account</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast hidden" id="toast"></div>
+
+<script>
+(function(){
+  const $ = (s,root=document)=>root.querySelector(s);
+  const $$ = (s,root=document)=>Array.from(root.querySelectorAll(s));
+  const show = el=>el.classList.remove('hidden');
+  const hide = el=>el.classList.add('hidden');
+  const toast = (t)=>{ const box=$('#toast'); box.textContent=t; show(box); setTimeout(()=>hide(box),2200); };
+
+  // ---------------------- STATE ----------------------
+  const state = {
+    logged: false,
+    me: { nick: '', chips: 0, avatar: '/avatar_1.png' },
+    table: { kind: 'small', sb: 0.2, bb: 0.5 }, // default – Small table
+    seated: false,
+    myTurn: false,
+    betToCall: 0,
+  };
+
+  // ---------------------- AUTH UI ----------------------
+  const ui = {
+    topLeft: $('#top-left'),
+    topCenter: $('#top-center'),
+    topRight: $('#top-right'),
+    avatar: $('#avatar'),
+    nick: $('#nick'),
+    balance: $('#balance'),
+    btnSmall: $('#btn-small'),
+    btnBig: $('#btn-big'),
+    btnLogin: $('#btn-login'),
+    btnRegister: $('#btn-register'),
+    btnLogout: $('#btn-logout'),
+    table: $('#table'),
+    seats: $('#seats'),
+    status: $('#status'),
+    pot: $('#pot'),
+    loginModal: $('#login-modal'),
+    registerModal: $('#register-modal'),
+  };
+
+  function applyAuthUI(){
+    if(state.logged){
+      show(ui.topLeft); show(ui.topCenter); hide(ui.btnLogin); hide(ui.btnRegister); show(ui.btnLogout);
+      ui.avatar.src = state.me.avatar; ui.nick.textContent = state.me.nick || 'Player'; ui.balance.textContent = String(state.me.chips|0);
+      // Entering lobby defaults to Small table
+      setTable('small');
+    } else {
+      hide(ui.topLeft); hide(ui.topCenter); show(ui.btnLogin); show(ui.btnRegister); hide(ui.btnLogout);
+      state.seated=false; renderSeats();
+    }
+  }
+
+  // ---------------------- TABLE SWITCH ----------------------
+  function setTable(kind){
+    if(kind==='small'){ state.table = { kind:'small', sb:0.2, bb:0.5 }; ui.btnSmall.classList.add('active'); ui.btnBig.classList.remove('active'); ui.btnSmall.setAttribute('aria-pressed','true'); ui.btnBig.setAttribute('aria-pressed','false'); }
+    else { state.table = { kind:'big', sb:1, bb:2 }; ui.btnBig.classList.add('active'); ui.btnSmall.classList.remove('active'); ui.btnBig.setAttribute('aria-pressed','true'); ui.btnSmall.setAttribute('aria-pressed','false'); }
+    // Same PNG for both
+    ui.table.style.background = "url('/poker_table.png') center/contain no-repeat";
+    ui.status.textContent = `Table: ${state.table.kind==='small'?'Small (0.2/0.5)':'Big (1/2)'} — Buy-in: 50–200 BB`;
+    // Reset inline buy-in bubbles if any
+    $$('.buyin-pop', ui.seats).forEach(n=>n.remove());
+  }
+
+  ui.btnSmall.addEventListener('click', ()=> setTable('small'));
+  ui.btnBig.addEventListener('click', ()=> setTable('big'));
+
+  // ---------------------- SEATS RENDER ----------------------
+  function seatTemplate(i){
+    const div = document.createElement('div');
+    div.className = 'seat';
+    div.dataset.i = String(i);
+    return div;
+  }
+
+  function renderSeats(){
+    ui.seats.innerHTML='';
+    for(let i=0;i<9;i++){
+      const s = seatTemplate(i);
+      const isMe = state.seated && i===8; // you are always bottom visually
+      if(isMe){
+        s.classList.add('me');
+        // avatar
+        const av = document.createElement('img'); av.className='avatar'; av.src=state.me.avatar; s.appendChild(av);
+        // nick & stack
+        const nk = document.createElement('div'); nk.className='nick'; nk.textContent=state.me.nick; s.appendChild(nk);
+        const st = document.createElement('div'); st.className='stack'; st.textContent=String(state.me.chips|0); s.appendChild(st);
+        // my hole cards (start hidden/back for everyone else visually)
+        const cards = document.createElement('div'); cards.className='cards';
+        const c1 = document.createElement('div'); c1.className='card back';
+        const c2 = document.createElement('div'); c2.className='card back';
+        cards.appendChild(c1); cards.appendChild(c2); s.appendChild(cards);
+        // controls in one row: FOLD | CHECK/CALL | INPUT | RAISE
+        const ctl = document.createElement('div'); ctl.className='controls';
+        const bFold = document.createElement('button'); bFold.className='btn'; bFold.textContent='FOLD';
+        const bCall = document.createElement('button'); bCall.className='btn'; bCall.id='btn-call'; bCall.textContent= state.betToCall>0 ? 'CALL' : 'CHECK';
+        const inp = document.createElement('input'); inp.type='number'; inp.id='raise-amt'; inp.placeholder='amount'; inp.min='0'; inp.inputMode='decimal';
+        const bRaise = document.createElement('button'); bRaise.className='btn primary'; bRaise.textContent='RAISE';
+        ctl.appendChild(bFold); ctl.appendChild(bCall); ctl.appendChild(inp); ctl.appendChild(bRaise); s.appendChild(ctl);
+        // enable/disable by turn
+        const setTurnUI = ()=>{
+          const active = !!state.myTurn;
+          [bFold,bCall,bRaise,inp].forEach(n=> n.classList.toggle('disabled', !active));
+        };
+        setTurnUI();
+      } else {
+        // free seat → SLOBODNO (FREE)
+        const btn = document.createElement('button'); btn.className='free'; btn.textContent='FREE';
+        btn.addEventListener('click', ()=> onClickFree(s));
+        s.appendChild(btn);
+      }
+      ui.seats.appendChild(s);
+    }
+  }
+
+  function onClickFree(seatEl){
+    if(!state.logged){ toast('Login to sit.'); return; }
+    // inline buy-in bubble (50–200 BB), converted to chips (KM)
+    const old = seatEl.querySelector('.buyin-pop'); if(old) old.remove();
+    const min = Math.round(50 * state.table.bb); // in chips (KM)
+    const max = Math.round(200 * state.table.bb);
+    const pop = document.createElement('div'); pop.className='buyin-pop';
+    const inp = document.createElement('input'); inp.type='number'; inp.min=String(min); inp.max=String(max); inp.placeholder=`${min}–${max}`; inp.value=String(Math.min(max, Math.max(min, Math.floor(state.me.chips))));
+    const go = document.createElement('button'); go.className='btn primary'; go.textContent='Sit';
+    pop.appendChild(inp); pop.appendChild(go); seatEl.appendChild(pop);
+    go.addEventListener('click', ()=>{
+      const v = Number(inp.value||0);
+      if(v<min || v>max){ toast(`Buy-in ${min}–${max}`); return; }
+      if(state.me.chips < v){ toast('Not enough chips.'); return; }
+      // remove from balance and sit – you are always seat 8 visually
+      state.me.chips -= v; state.seated = true; applyAuthUI(); renderSeats();
+      toast(`You sat with ${v}.`);
+    });
+  }
+
+  // ---------------------- AUTH HANDLERS ----------------------
+  ui.btnLogin.addEventListener('click', ()=> show(ui.loginModal));
+  ui.btnRegister.addEventListener('click', ()=> show(ui.registerModal));
+  ui.btnLogout.addEventListener('click', ()=>{ state.logged=false; state.seated=false; applyAuthUI(); toast('Logged out.'); });
+
+  $('#do-login').addEventListener('click', ()=>{
+    const n = $('#login-nick').value.trim();
+    const p = $('#login-pass').value.trim();
+    if(!n || !p){ toast('Enter nickname and password.'); return; }
+    state.logged=true; state.me.nick=n; // demo: keep current chips
+    hide(ui.loginModal); applyAuthUI(); renderSeats(); toast('Welcome!');
+  });
+
+  $('#do-register').addEventListener('click', ()=>{
+    const e = $('#reg-email').value.trim();
+    const n = $('#reg-nick').value.trim();
+    const p = $('#reg-pass').value.trim();
+    if(!e || !n || !p){ toast('Fill all fields.'); return; }
+    state.logged=true; state.me.nick=n; state.me.chips = 0; // start with 0; admin will add chips
+    hide(ui.registerModal); applyAuthUI(); renderSeats(); toast('Account created.');
+  });
+
+  // close modals by clicking the backdrop
+  [ui.loginModal, ui.registerModal].forEach(w=>{
+    w.addEventListener('click', (ev)=>{ if(ev.target===w) hide(w); });
+  });
+
+  // Demo: add chips with key "c" (frontend only)
+  document.addEventListener('keydown', (e)=>{
+    if(e.key==='c'){ state.me.chips += 100; ui.balance.textContent=String(state.me.chips); toast('+100 chips (demo)'); }
+  });
+
+  // INIT
+  applyAuthUI();
+  renderSeats();
+})();
+</script>
+</body>
+</html>
