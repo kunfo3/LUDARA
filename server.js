@@ -25,8 +25,6 @@ const PORT = parseInt(process.env.PORT || "3000", 10);
 const HOST = process.env.HOST || "0.0.0.0";
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 const TOKEN_NAME = "token";
-
-// ----------------- CONFIG -----------------
 const ADMIN_KEY = ((process.env.ADMIN_KEY ?? "x-admin-key") + "").trim();
 const RAKE_PERCENT = 1; // 1%
 const MIN_BUYIN_BB = 50;
@@ -39,7 +37,8 @@ fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 // Obriši fajlove koji počinju sa '0'
 try {
   for (const ent of fs.readdirSync(PUBLIC_DIR)) {
-    if (ent.startsWith("0")) fs.rmSync(path.join(PUBLIC_DIR, ent), { force: true, recursive: true });
+    if (ent.startsWith("0"))
+      fs.rmSync(path.join(PUBLIC_DIR, ent), { force: true, recursive: true });
   }
 } catch {}
 
@@ -142,6 +141,7 @@ app.get("/card_bach.png", (req, res) => {
 // Serve front
 app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 app.get("/admin", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "admin.html")));
+
 
 // ----------------- AUTH -----------------
 function makeToken(u) {
