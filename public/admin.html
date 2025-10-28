@@ -39,12 +39,12 @@
   <section class="card">
     <div class="toolbar">
       <div class="row grow">
-        <input id="filter" class="grow" type="text" placeholder="Traži po emailu…">
+        <input id="filter" class="grow" type="text" placeholder="Traži po nicku…">
         <button class="secondary" id="btn-reload">Osvježi</button>
       </div>
       <div class="row">
         <span class="muted">Sort:</span>
-        <button class="secondary" id="sort-email">Email</button>
+        <button class="secondary" id="sort-nick">Nick</button>
         <button class="secondary" id="sort-balance">Balance</button>
         <button class="secondary" id="sort-id">ID</button>
       </div>
@@ -53,7 +53,7 @@
 
   <section class="card">
     <div class="row">
-      <input id="email" class="grow" type="email" placeholder="email korisnika">
+      <input id="nick" class="grow" type="text" placeholder="nickname korisnika">
       <input id="amount" type="number" placeholder="čipovi (+ dodaj, - oduzmi)">
       <button id="btn-apply">Primijeni</button>
       <button id="btn-disable" class="red">DISABLE</button>
@@ -82,9 +82,9 @@
   function render(){
     let list = USERS.slice();
     const q=$("#filter").value.trim().toLowerCase();
-    if(q) list=list.filter(u=>(u.email||"").toLowerCase().includes(q));
+    if(q) list=list.filter(u=>(u.nick||"").toLowerCase().includes(q));
     list.sort((a,b)=>{
-      if(SORT==="email"){ const A=(a.email||"").toLowerCase(),B=(b.email||"").toLowerCase(); return ASC?A.localeCompare(B):B.localeCompare(A); }
+      if(SORT==="nick"){ const A=(a.nick||"").toLowerCase(),B=(b.nick||"").toLowerCase(); return ASC?A.localeCompare(B):B.localeCompare(A); }
       if(SORT==="balance"){ return ASC?(a.balance|0)-(b.balance|0):(b.balance|0)-(a.balance|0); }
       return ASC?(a.id|0)-(b.id|0):(b.id|0)-(a.id|0);
     });
@@ -97,7 +97,7 @@
         <div class="left">
           <img class="avatar" src="${u.avatar||'/avatar_1.png'}">
           <div>
-            <div style="font-weight:800">${u.email}${u.disabled? ' <span class="pill" style="margin-left:6px;border-color:#b91c1c;color:#fca5a5">DISABLED</span>':''}</div>
+            <div style="font-weight:800">${u.nick || '—'}${u.disabled? ' <span class="pill" style="margin-left:6px;border-color:#b91c1c;color:#fca5a5">DISABLED</span>':''}</div>
             <div class="muted">ID: ${u.id}</div>
           </div>
         </div>
@@ -105,7 +105,7 @@
           <div class="pill">${u.balance|0} čipova</div>
           <button class="secondary selectBtn">Select</button>
         </div>`;
-      div.querySelector(".selectBtn").onclick=()=>{ $("#email").value=u.email; setOp("Korisnik odabran."); };
+      div.querySelector(".selectBtn").onclick=()=>{ $("#nick").value=u.nick; setOp("Korisnik odabran."); };
       box.appendChild(div);
     }
     $("#count").textContent=String(list.length);
@@ -122,32 +122,40 @@
       USERS=j.users||[]; setMsg("OK"); render();
     }catch{ setMsg("Greška konekcije."); }
   }
+
   async function post(path, body){
-    return await fetch(path,{method:"POST",headers:{"Content-Type":"application/json","x-admin-key":KEY},body:JSON.stringify(body||{})})
-      .then(r=>r.json()).catch(()=>null);
+    return await fetch(path,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-admin-key":KEY},
+      body:JSON.stringify(body||{})
+    }).then(r=>r.json()).catch(()=>null);
   }
 
   $("#btn-set").onclick=()=>{ KEY=$("#adminkey").value.trim(); setMsg(KEY?"Admin ključ postavljen.":""); if(KEY) loadUsers(); };
   $("#btn-reload").onclick=loadUsers;
   $("#filter").oninput=render;
-  $("#sort-email").onclick=()=>{ SORT="email"; ASC=!ASC; render(); };
+  $("#sort-nick").onclick=()=>{ SORT="nick"; ASC=!ASC; render(); };
   $("#sort-balance").onclick=()=>{ SORT="balance"; ASC=!ASC; render(); };
   $("#sort-id").onclick=()=>{ SORT="id"; ASC=!ASC; render(); };
 
   $("#btn-apply").onclick=async()=>{
-    const email=$("#email").value.trim();
+    const nick=$("#nick").value.trim();
     const amount=parseInt($("#amount").value||"0",10);
-    if(!email || !amount){ setOp("Unesi email i iznos."); return; }
-    const r=await post("/api/admin/chips",{email,amount});
+    if(!nick || !amount){ setOp("Unesi nickname i iznos."); return; }
+    const r=await post("/api/admin/chips",{nick,amount});
     if(r?.ok){ setOp("Uspješno."); await loadUsers(); } else setOp("Greška: "+(r?.error||""));
   };
+
   $("#btn-disable").onclick=async()=>{
-    const email=$("#email").value.trim(); if(!email){ setOp("Unesi email."); return; }
-    const r=await post("/api/admin/disable",{email,flag:1}); if(r?.ok){ setOp("Korisnik DISABLED."); await loadUsers(); } else setOp("Greška.");
+    const nick=$("#nick").value.trim(); if(!nick){ setOp("Unesi nickname."); return; }
+    const r=await post("/api/admin/disable",{nick,flag:1}); 
+    if(r?.ok){ setOp("Korisnik DISABLED."); await loadUsers(); } else setOp("Greška.");
   };
+
   $("#btn-enable").onclick=async()=>{
-    const email=$("#email").value.trim(); if(!email){ setOp("Unesi email."); return; }
-    const r=await post("/api/admin/disable",{email,flag:0}); if(r?.ok){ setOp("Korisnik ENABLED."); await loadUsers(); } else setOp("Greška.");
+    const nick=$("#nick").value.trim(); if(!nick){ setOp("Unesi nickname."); return; }
+    const r=await post("/api/admin/disable",{nick,flag:0}); 
+    if(r?.ok){ setOp("Korisnik ENABLED."); await loadUsers(); } else setOp("Greška.");
   };
 
   $("#adminkey").focus();
