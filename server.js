@@ -144,8 +144,6 @@ app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 app.get("/admin", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "admin.html")));
 
 // ----------------- AUTH -----------------
-const ADMIN_KEY = ((process.env.ADMIN_KEY ?? "x-admin-key") + "").trim();
-
 function makeToken(u) {
   return jwt.sign({ uid: u.id, nick: u.nick }, JWT_SECRET, { expiresIn: "30d" });
 }
@@ -168,6 +166,7 @@ function adminKeyRequired(req, res, next) {
   if (got !== ADMIN_KEY) return res.status(401).json({ ok:false, error:"bad_admin_key" });
   next();
 }
+
 
 
 // Register
