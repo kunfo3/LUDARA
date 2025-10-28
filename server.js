@@ -26,7 +26,7 @@ const HOST = process.env.HOST || "0.0.0.0";
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 const TOKEN_NAME = "token";
 
-const ADMIN_KEY = process.env.ADMIN_KEY || "x admin key";  // <-- kako si tražio
+const ADMIN_KEY = process.env.ADMIN_KEY || "x-admin-key";  // <-- kako si tražio
 const RAKE_PERCENT = 1; // 1%
 const MIN_BUYIN_BB = 50;
 const MAX_BUYIN_BB = 200;
