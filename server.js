@@ -192,33 +192,25 @@ app.post("/api/login",(req,res)=>{
 app.post("/api/logout",(req,res)=>{ res.clearCookie(TOKEN_NAME); res.json({ok:true}); });
 
 // ----------------- ADMIN (FIXED & ENHANCED) -----------------
-
-// GET /api/admin/users
-// Query parametri (svi opcionalni):
-//   q=tekst        → traži po nicku ili emailu (case-insensitive)
-//   sort=id|nick|balance   → default: id
-//   asc=0|1        → 1=uzlazno, 0=silazno (default 0)
-//   limit=broj     → default 500
-//   offset=broj    → default 0
 app.get("/api/admin/users", adminKeyRequired, (req, res) => {
   const qRaw   = (req.query.q || "").toString().trim().toLowerCase();
   const sortIn = (req.query.sort || "id").toString().toLowerCase();
   const ascIn  = req.query.asc === "1" ? "ASC" : "DESC";
-  const limit  = Math.max(0, Math.min( Number(req.query.limit ?? 500), 5000 ));
+  const limit  = Math.max(0, Math.min(Number(req.query.limit ?? 500), 5000));
   const offset = Math.max(0, Number(req.query.offset ?? 0));
-
   const sortCol = ({ id:"id", nick:"nick", balance:"balance" }[sortIn]) || "id";
-
-  // pripremi WHERE i parametre
   const hasQ = qRaw.length > 0;
-  const like = `%${qRaw}%`;
-
+  const params = { limit, offset };
+  let where = "";
+  if (hasQ) {
+    params.like = `%${qRaw}%`;
+    where = "WHERE LOWER(COALESCE(nick,'')) LIKE @like OR LOWER(COALESCE(email,'')) LIKE @like";
+  }
   const rows = db.prepare(`
     SELECT
       id,
-      -- nick fallback: ako je null/prazan -> 'user_ID'
       CASE
-        WHEN nick IS NULL OR TRIM(nick)='' THEN 'user_' || id
+        WHEN nick IS NULL OR TRIM(nick) = '' THEN 'user_' || id
         ELSE nick
       END AS nick,
       email,
@@ -226,44 +218,37 @@ app.get("/api/admin/users", adminKeyRequired, (req, res) => {
       CAST(balance AS REAL) AS balance,
       disabled
     FROM users
-    ${hasQ ? `WHERE LOWER(COALESCE(nick,'')) LIKE @like OR LOWER(COALESCE(email,'')) LIKE @like` : ``}
+    ${where}
     ORDER BY ${sortCol} ${ascIn}
     LIMIT @limit OFFSET @offset
-  `).all({ like, limit, offset });
-
+  `).all(params);
   res.json({ ok:true, users: rows, count: rows.length });
 });
 
-// POST /api/admin/chips  { nick, amount }
-// Dodaje/oduzima čipove po NICKU (decimalno podržano). Ne dozvoljava negativan saldo.
 app.post("/api/admin/chips", adminKeyRequired, (req, res) => {
-  const { nick, amount } = req.body || {};
+  let { nick, amount } = req.body || {};
+  nick = (nick ?? "").toString().trim();
   const delta = Number(amount);
-
   if (!nick || !Number.isFinite(delta) || delta === 0) {
     return res.json({ ok:false, error:"bad_params" });
   }
-
   const u = db.prepare(`
-    SELECT id,
-           CASE WHEN nick IS NULL OR TRIM(nick)='' THEN 'user_'||id ELSE nick END AS nick,
-           CAST(balance AS REAL) AS balance
-    FROM users WHERE nick = ?
-  `).get(String(nick));
-
+    SELECT
+      id,
+      CASE WHEN nick IS NULL OR TRIM(nick)='' THEN 'user_'||id ELSE nick END AS nick,
+      CAST(balance AS REAL) AS balance
+    FROM users
+    WHERE LOWER(COALESCE(nick,'')) = LOWER(?)
+  `).get(nick);
   if (!u) return res.json({ ok:false, error:"notfound" });
-
-  // Izračunaj novi balans (bez negativnog salda)
   const desired = u.balance + delta;
   const newBal  = desired < 0 ? 0 : Math.round(desired * 100) / 100;
-  const applied = Math.round((newBal - u.balance) * 100) / 100; // stvarno primijenjeno
-
+  const applied = Math.round((newBal - u.balance) * 100) / 100;
   const tx = db.transaction(() => {
     db.prepare(`UPDATE users SET balance = ?, last_seen = datetime('now') WHERE id = ?`)
       .run(newBal, u.id);
   });
   tx();
-
   return res.json({
     ok:true,
     user_id: u.id,
@@ -275,31 +260,33 @@ app.post("/api/admin/chips", adminKeyRequired, (req, res) => {
   });
 });
 
-// POST /api/admin/disable  { nick, flag }
-// flag: 1 = disable, 0 = enable
 app.post("/api/admin/disable", adminKeyRequired, (req, res) => {
-  const { nick, flag } = req.body || {};
+  let { nick, flag } = req.body || {};
+  nick = (nick ?? "").toString().trim();
   const f = Number(flag) ? 1 : 0;
-
   if (!nick) return res.json({ ok:false, error:"bad_params" });
-
-  const u = db.prepare(`SELECT id FROM users WHERE nick = ?`).get(String(nick));
+  const u = db.prepare(`
+    SELECT id FROM users
+    WHERE LOWER(COALESCE(nick,'')) = LOWER(?)
+  `).get(nick);
   if (!u) return res.json({ ok:false, error:"notfound" });
-
   const tx = db.transaction(() => {
     db.prepare(`UPDATE users SET disabled = ? WHERE id = ?`).run(f, u.id);
   });
   tx();
-
   const out = db.prepare(`
-    SELECT id,
-           CASE WHEN nick IS NULL OR TRIM(nick)='' THEN 'user_'||id ELSE nick END AS nick,
-           email, avatar, CAST(balance AS REAL) AS balance, disabled
+    SELECT
+      id,
+      CASE WHEN nick IS NULL OR TRIM(nick)='' THEN 'user_'||id ELSE nick END AS nick,
+      email,
+      avatar,
+      CAST(balance AS REAL) AS balance,
+      disabled
     FROM users WHERE id = ?
   `).get(u.id);
-
   res.json({ ok:true, user: out });
 });
+
 
 // ----------------- BUY-IN (sit) -----------------
 function getTable(name){ return db.prepare(`SELECT * FROM tables WHERE name=?`).get(name); }
