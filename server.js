@@ -191,101 +191,82 @@ app.post("/api/login",(req,res)=>{
 // Logout
 app.post("/api/logout",(req,res)=>{ res.clearCookie(TOKEN_NAME); res.json({ok:true}); });
 
-// ----------------- ADMIN (FIXED & ENHANCED) -----------------
+// ----------------- ADMIN (FINAL WORKING VERSION) -----------------
 app.get("/api/admin/users", adminKeyRequired, (req, res) => {
-  const qRaw   = (req.query.q || "").toString().trim().toLowerCase();
-  const sortIn = (req.query.sort || "id").toString().toLowerCase();
-  const ascIn  = req.query.asc === "1" ? "ASC" : "DESC";
-  const limit  = Math.max(0, Math.min(Number(req.query.limit ?? 500), 5000));
-  const offset = Math.max(0, Number(req.query.offset ?? 0));
-  const sortCol = ({ id:"id", nick:"nick", balance:"balance" }[sortIn]) || "id";
-  const hasQ = qRaw.length > 0;
-  const params = { limit, offset };
-  let where = "";
-  if (hasQ) {
-    params.like = `%${qRaw}%`;
-    where = "WHERE LOWER(COALESCE(nick,'')) LIKE @like OR LOWER(COALESCE(email,'')) LIKE @like";
+  try {
+    const q = (req.query.q || "").toString().trim().toLowerCase();
+    const rows = db.prepare(`
+      SELECT
+        id,
+        CASE WHEN nick IS NULL OR TRIM(nick)='' THEN 'user_'||id ELSE nick END AS nick,
+        COALESCE(email, '') AS email,
+        COALESCE(avatar, '/avatar_1.png') AS avatar,
+        CAST(balance AS REAL) AS balance,
+        disabled
+      FROM users
+      ${q ? "WHERE LOWER(nick) LIKE ? OR LOWER(email) LIKE ?" : ""}
+      ORDER BY id DESC
+    `).all(q ? [`%${q}%`, `%${q}%`] : []);
+    res.json({ ok: true, users: rows, count: rows.length });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
   }
-  const rows = db.prepare(`
-    SELECT
-      id,
-      CASE
-        WHEN nick IS NULL OR TRIM(nick) = '' THEN 'user_' || id
-        ELSE nick
-      END AS nick,
-      email,
-      avatar,
-      CAST(balance AS REAL) AS balance,
-      disabled
-    FROM users
-    ${where}
-    ORDER BY ${sortCol} ${ascIn}
-    LIMIT @limit OFFSET @offset
-  `).all(params);
-  res.json({ ok:true, users: rows, count: rows.length });
 });
 
 app.post("/api/admin/chips", adminKeyRequired, (req, res) => {
-  let { nick, amount } = req.body || {};
-  nick = (nick ?? "").toString().trim();
-  const delta = Number(amount);
-  if (!nick || !Number.isFinite(delta) || delta === 0) {
-    return res.json({ ok:false, error:"bad_params" });
-  }
-  const u = db.prepare(`
-    SELECT
-      id,
-      CASE WHEN nick IS NULL OR TRIM(nick)='' THEN 'user_'||id ELSE nick END AS nick,
-      CAST(balance AS REAL) AS balance
-    FROM users
-    WHERE LOWER(COALESCE(nick,'')) = LOWER(?)
-  `).get(nick);
-  if (!u) return res.json({ ok:false, error:"notfound" });
-  const desired = u.balance + delta;
-  const newBal  = desired < 0 ? 0 : Math.round(desired * 100) / 100;
-  const applied = Math.round((newBal - u.balance) * 100) / 100;
-  const tx = db.transaction(() => {
-    db.prepare(`UPDATE users SET balance = ?, last_seen = datetime('now') WHERE id = ?`)
+  try {
+    let { nick, amount } = req.body || {};
+    nick = (nick || "").trim();
+    const delta = Number(amount);
+    if (!nick || !Number.isFinite(delta) || delta === 0)
+      return res.json({ ok: false, error: "bad_params" });
+
+    const u = db.prepare(`
+      SELECT id, nick, CAST(balance AS REAL) AS balance
+      FROM users
+      WHERE LOWER(nick) = LOWER(?)
+    `).get(nick);
+
+    if (!u) return res.json({ ok: false, error: "notfound" });
+
+    const newBal = Math.max(0, Math.round((u.balance + delta) * 100) / 100);
+    db.prepare(`UPDATE users SET balance=?, last_seen=datetime('now') WHERE id=?`)
       .run(newBal, u.id);
-  });
-  tx();
-  return res.json({
-    ok:true,
-    user_id: u.id,
-    nick: u.nick,
-    old_balance: u.balance,
-    delta_requested: delta,
-    delta_applied: applied,
-    balance: newBal
-  });
+
+    res.json({ ok: true, user_id: u.id, nick: u.nick, balance: newBal });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
 });
 
 app.post("/api/admin/disable", adminKeyRequired, (req, res) => {
-  let { nick, flag } = req.body || {};
-  nick = (nick ?? "").toString().trim();
-  const f = Number(flag) ? 1 : 0;
-  if (!nick) return res.json({ ok:false, error:"bad_params" });
-  const u = db.prepare(`
-    SELECT id FROM users
-    WHERE LOWER(COALESCE(nick,'')) = LOWER(?)
-  `).get(nick);
-  if (!u) return res.json({ ok:false, error:"notfound" });
-  const tx = db.transaction(() => {
-    db.prepare(`UPDATE users SET disabled = ? WHERE id = ?`).run(f, u.id);
-  });
-  tx();
-  const out = db.prepare(`
-    SELECT
-      id,
-      CASE WHEN nick IS NULL OR TRIM(nick)='' THEN 'user_'||id ELSE nick END AS nick,
-      email,
-      avatar,
-      CAST(balance AS REAL) AS balance,
-      disabled
-    FROM users WHERE id = ?
-  `).get(u.id);
-  res.json({ ok:true, user: out });
+  try {
+    let { nick, flag } = req.body || {};
+    nick = (nick || "").trim();
+    const f = Number(flag) ? 1 : 0;
+    if (!nick) return res.json({ ok: false, error: "bad_params" });
+
+    const u = db.prepare(`SELECT id FROM users WHERE LOWER(nick)=LOWER(?)`).get(nick);
+    if (!u) return res.json({ ok: false, error: "notfound" });
+
+    db.prepare(`UPDATE users SET disabled=? WHERE id=?`).run(f, u.id);
+
+    const out = db.prepare(`
+      SELECT id,
+             CASE WHEN nick IS NULL OR TRIM(nick)='' THEN 'user_'||id ELSE nick END AS nick,
+             COALESCE(email,'') AS email,
+             COALESCE(avatar,'/avatar_1.png') AS avatar,
+             CAST(balance AS REAL) AS balance,
+             disabled
+      FROM users WHERE id=?
+    `).get(u.id);
+
+    res.json({ ok: true, user: out });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
 });
+
 
 
 // ----------------- BUY-IN (sit) -----------------
