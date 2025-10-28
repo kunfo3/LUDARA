@@ -26,7 +26,8 @@ const HOST = process.env.HOST || "0.0.0.0";
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 const TOKEN_NAME = "token";
 
-const ADMIN_KEY = process.env.ADMIN_KEY || "x-admin-key";  // <-- kako si tražio
+// ----------------- CONFIG -----------------
+const ADMIN_KEY = ((process.env.ADMIN_KEY ?? "x-admin-key") + "").trim();
 const RAKE_PERCENT = 1; // 1%
 const MIN_BUYIN_BB = 50;
 const MAX_BUYIN_BB = 200;
@@ -143,24 +144,31 @@ app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 app.get("/admin", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "admin.html")));
 
 // ----------------- AUTH -----------------
+const ADMIN_KEY = ((process.env.ADMIN_KEY ?? "x-admin-key") + "").trim();
+
 function makeToken(u) {
   return jwt.sign({ uid: u.id, nick: u.nick }, JWT_SECRET, { expiresIn: "30d" });
 }
+
 function readToken(req) {
   const t = req.cookies?.[TOKEN_NAME];
   if (!t) return null;
   try { return jwt.verify(t, JWT_SECRET); } catch { return null; }
 }
+
 function authRequired(req, res, next) {
   const p = readToken(req);
   if (!p) return res.status(401).json({ ok:false, error:"unauthorized" });
   req.user = p;
   next();
 }
-function adminKeyRequired(req,res,next){
-  if (req.header("x-admin-key") !== ADMIN_KEY) return res.status(401).json({ ok:false, error:"bad_admin_key" });
+
+function adminKeyRequired(req, res, next) {
+  const got = ((req.header("x-admin-key") ?? "") + "").trim();
+  if (got !== ADMIN_KEY) return res.status(401).json({ ok:false, error:"bad_admin_key" });
   next();
 }
+
 
 // Register
 app.post("/api/register", (req,res)=>{
